@@ -56,7 +56,7 @@ struct thread_info {
 	struct cpu_context_save	cpu_context;	/* cpu context */
 	__u32			syscall;	/* syscall number */
 	__u8			used_cp[16];	/* thread used copro */
-	unsigned long		tp_value;
+	unsigned long		tp_value[2];	/* TLS registers */
 	struct crunch_state	crunchstate;
 	union fp_state		fpstate __attribute__((aligned(8)));
 	union vfp_state		vfpstate;
@@ -144,6 +144,7 @@ extern void vfp_flush_hwstate(struct thread_info *);
 #define TIF_FREEZE		19
 #define TIF_RESTORE_SIGMASK	20
 #define TIF_SECCOMP		21
+#define TIF_MM_RELEASED		23	/* task MM has been released */
 
 #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
 #define _TIF_NEED_RESCHED	(1 << TIF_NEED_RESCHED)

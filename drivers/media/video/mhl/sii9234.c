@@ -40,7 +40,10 @@
 #include <linux/uaccess.h>
 #include <linux/proc_fs.h>
 #include <linux/wakelock.h>
-#include <linux/earlysuspend.h>
+#ifdef CONFIG_FB
+#include <linux/fb.h>
+#include <linux/notifier.h>
+#endif
 #include <linux/hrtimer.h>
 #ifdef CONFIG_EXTCON
 #include <linux/extcon.h>
@@ -221,7 +224,7 @@ static void goto_d3(void);
 /*////////////////////////////////////////////////////////////////////////////*/
 
 #ifdef CONFIG_MACH_MIDAS
-void sii9234_wake_lock(void)
+void sii9234_pm_stay_awake(void)
 {
 	struct sii9234_data *sii9234 = dev_get_drvdata(sii9244_mhldev);
 	if (!sii9234 || !sii9234->pdata) {
@@ -229,12 +232,12 @@ void sii9234_wake_lock(void)
 			 __func__);
 		return;
 	}
-	wake_lock(&sii9234->mhl_wake_lock);
+	__pm_stay_awake(&sii9234->mhl_wake_lock);
 	pr_debug("%s()\n", __func__);
 }
-EXPORT_SYMBOL(sii9234_wake_lock);
+EXPORT_SYMBOL(sii9234_pm_stay_awake);
 
-void sii9234_wake_unlock(void)
+void sii9234_pm_relax(void)
 {
 	struct sii9234_data *sii9234 = dev_get_drvdata(sii9244_mhldev);
 	if (!sii9234 || !sii9234->pdata) {
@@ -242,10 +245,10 @@ void sii9234_wake_unlock(void)
 			 __func__);
 		return;
 	}
-	wake_unlock(&sii9234->mhl_wake_lock);
+	__pm_relax(&sii9234->mhl_wake_lock);
 	pr_debug("%s()\n", __func__);
 }
-EXPORT_SYMBOL(sii9234_wake_unlock);
+EXPORT_SYMBOL(sii9234_pm_relax);
 #endif
 
 #ifdef __CONFIG_MHL_SWING_LEVEL__
@@ -3782,14 +3785,14 @@ static ssize_t sysfs_mhl_on_store(struct class *class,
 	if (p[0] == '1') {
 		pr_info("%s() MHL Attached !!\n", __func__);
 #ifdef CONFIG_MACH_MIDAS
-		sii9234_wake_lock();
+		sii9234_pm_stay_awake();
 #endif
 		mhl_onoff_ex(1);
 	} else {
 		pr_info("%s() MHL Detached !!\n", __func__);
 		mhl_onoff_ex(false);
 #ifdef CONFIG_MACH_MIDAS
-		sii9234_wake_unlock();
+		sii9234_pm_relax();
 #endif
 	}
 	return size;
@@ -3954,7 +3957,7 @@ static void sii9234_extcon_work(struct work_struct *work)
 #endif
 #ifdef CONFIG_SAMSUNG_MHL
 #ifdef CONFIG_MACH_MIDAS
-		sii9234_wake_lock();
+		sii9234_pm_stay_awake();
 #endif
 		mhl_onoff_ex(1);
 #endif
@@ -3966,7 +3969,7 @@ static void sii9234_extcon_work(struct work_struct *work)
 #ifdef CONFIG_SAMSUNG_MHL
 		mhl_onoff_ex(false);
 #ifdef CONFIG_MACH_MIDAS
-		sii9234_wake_unlock();
+		sii9234_pm_relax();
 #endif
 #endif
 	}
@@ -3986,33 +3989,61 @@ static int sii9234_extcon_notifier(struct notifier_block *self,
 #endif
 
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
-static void sii9234_early_suspend(struct early_suspend *early_sus)
+#ifdef CONFIG_FB
+static void sii9234_fb_suspend(struct sii9234_data *sii9234)
 {
-	struct sii9234_data *sii9234 = container_of(early_sus,
-			struct sii9234_data, early_suspend);
+	if (sii9234->fb_suspended)
+		return;
+
+	sii9234->fb_suspended = true;
 
 	pr_debug("%s()\n", __func__);
 	if (!sii9234 || !sii9234->pdata)
 		return;
 
 	sii9234_mutex_lock(&sii9234->lock);
-	sii9234->suspend_state = true;
+	sii9234->fb_suspended = true;
 	sii9234_mutex_unlock(&sii9234->lock);
 }
 
-static void sii9234_late_resume(struct early_suspend *early_sus)
+static void sii9234_fb_resume(struct sii9234_data *sii9234)
 {
-	struct sii9234_data *sii9234 = container_of(early_sus,
-			struct sii9234_data, early_suspend);
+	if (!sii9234->fb_suspended)
+		return;
 
 	pr_debug("%s()\n", __func__);
 	if (!sii9234 || !sii9234->pdata)
 		return;
 
 	sii9234_mutex_lock(&sii9234->lock);
-	sii9234->suspend_state = false;
+	sii9234->fb_suspended = false;
 	sii9234_mutex_unlock(&sii9234->lock);
+}
+
+static int fb_notifier_callback(struct notifier_block *self,
+				unsigned long event, void *data)
+{
+	struct fb_event *evdata = data;
+	int *blank;
+	struct sii9234_data *sii9234 = container_of(self, struct sii9234_data, fb_notif);
+	if (evdata && evdata->data && sii9234) {
+		if (event == FB_EVENT_BLANK) {
+			blank = evdata->data;
+			switch (*blank) {
+				case FB_BLANK_UNBLANK:
+				case FB_BLANK_NORMAL:
+				case FB_BLANK_VSYNC_SUSPEND:
+				case FB_BLANK_HSYNC_SUSPEND:
+					sii9234_fb_resume(sii9234);
+					break;
+				default:
+				case FB_BLANK_POWERDOWN:
+					sii9234_fb_suspend(sii9234);
+					break;
+			}
+		}
+	}
+	return 0;
 }
 #endif
 
@@ -4087,7 +4118,7 @@ static int __devinit sii9234_mhl_tx_i2c_probe(struct i2c_client *client,
 	switch_dev_register(&sii9234->mhl_event_switch);
 
 #ifdef CONFIG_MACH_MIDAS
-	wake_lock_init(&sii9234->mhl_wake_lock, WAKE_LOCK_SUSPEND,
+	wakeup_source_init(&sii9234->mhl_wake_lock, 
 		       "mhl_wake_lock");
 	pr_debug("%s(): wake lock is initialized.\n", __func__);
 #endif
@@ -4215,12 +4246,10 @@ static int __devinit sii9234_mhl_tx_i2c_probe(struct i2c_client *client,
 	}
 #endif
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
-	sii9234->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB - 5;
-	sii9234->early_suspend.suspend = sii9234_early_suspend;
-	sii9234->early_suspend.resume = sii9234_late_resume;
-	register_early_suspend(&sii9234->early_suspend);
-	sii9234->suspend_state = false;
+#ifdef CONFIG_FB
+	sii9234->fb_suspended = false;
+	sii9234->fb_notif.notifier_call = fb_notifier_callback;
+	fb_register_client(&sii9234->fb_notif);
 #endif
 #ifdef __CONFIG_TMDS_OFFON_WORKAROUND__
 	sii9234->tmds_state = 0;

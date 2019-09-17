@@ -130,6 +130,11 @@ int hci_uart_tx_wakeup(struct hci_uart *hu)
 	struct hci_dev *hdev = hu->hdev;
 	struct sk_buff *skb;
 
+#if defined(CONFIG_BT_CSR8811)
+	if(hdev == NULL)
+		return -1;
+#endif
+
 	if (test_and_set_bit(HCI_UART_SENDING, &hu->tx_state)) {
 		set_bit(HCI_UART_TX_WAKEUP, &hu->tx_state);
 		return 0;

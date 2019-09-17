@@ -555,7 +555,7 @@ struct sii9234_data {
 	struct work_struct		tmds_offon_work;
 #endif
 #ifdef CONFIG_MACH_MIDAS
-	struct wake_lock		mhl_wake_lock;
+	struct wakeup_source		mhl_wake_lock;
 #endif
 	struct work_struct mhl_tx_init_work; /* wolverin */
 	struct workqueue_struct *mhl_tx_init_wq;
@@ -569,9 +569,9 @@ struct sii9234_data {
 	struct work_struct extcon_wq;
 	bool extcon_attached;
 #endif
-#ifdef CONFIG_HAS_EARLYSUSPEND
-	struct early_suspend early_suspend;
-	bool suspend_state;
+#ifdef CONFIG_FB
+	struct notifier_block fb_notif;
+	bool fb_suspended;
 #endif
 #ifdef __CONFIG_TMDS_OFFON_WORKAROUND__
 	bool tmds_state;

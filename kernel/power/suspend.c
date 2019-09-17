@@ -29,9 +29,6 @@
 #include "power.h"
 
 const char *const pm_states[PM_SUSPEND_MAX] = {
-#ifdef CONFIG_EARLYSUSPEND
-	[PM_SUSPEND_ON]		= "on",
-#endif
 	[PM_SUSPEND_STANDBY]	= "standby",
 	[PM_SUSPEND_MEM]	= "mem",
 };
@@ -321,7 +318,7 @@ void pm_wd_del_timer(struct timer_list *timer)
  *	Then, do the setup for suspend, enter the state, and cleaup (after
  *	we've woken up).
  */
-int enter_state(suspend_state_t state)
+static int enter_state(suspend_state_t state)
 {
 	int error;
 	struct timer_list timer;

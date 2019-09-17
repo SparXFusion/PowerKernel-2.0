@@ -59,6 +59,8 @@
 #include "mdnie_table_p4note.h"
 #elif defined(CONFIG_FB_S5P_S6D6AA1) && defined(CONFIG_MACH_GD2)
 #include "mdnie_table_gd2.h"
+#elif defined(CONFIG_FB_S5P_S6D6AA1) && defined(CONFIG_MACH_SF2)
+#include "mdnie_table_sf2.h"
 #elif defined(CONFIG_FB_S5P_S6D6AA1)
 #include "mdnie_table_gc1.h"
 #elif defined(CONFIG_FB_S5P_LMS501XX)
@@ -971,14 +973,17 @@ static struct device_attribute mdnie_attributes[] = {
 };
 
 #ifdef CONFIG_PM
-#if defined(CONFIG_HAS_EARLYSUSPEND)
-static void mdnie_early_suspend(struct early_suspend *h)
+#if defined(CONFIG_FB)
+static void mdnie_fb_suspend(struct mdnie_info *mdnie)
 {
-	struct mdnie_info *mdnie = container_of(h, struct mdnie_info, early_suspend);
+	if (mdnie->fb_suspended)
+		return;
+
+	mdnie->fb_suspended = true;
 
 	dev_info(mdnie->dev, "+%s\n", __func__);
-	printk("%s: scenario:%d accessibility:%d", __func__, mdnie->scenario, mdnie->accessibility);
 
+	printk("%s: scenario:%d accessibility:%d", __func__, mdnie->scenario, mdnie->accessibility);
 #if defined(CONFIG_FB_MDNIE_PWM)
 	struct lcd_platform_data *pd = mdnie->lcd_pd;
 
@@ -989,15 +994,19 @@ static void mdnie_early_suspend(struct early_suspend *h)
 
 	if (pd && pd->power_on)
 		pd->power_on(NULL, 0);
+
 #endif
 	dev_info(mdnie->dev, "-%s\n", __func__);
 
 	return;
 }
 
-static void mdnie_late_resume(struct early_suspend *h)
+static void mdnie_fb_resume(struct mdnie_info *mdnie)
 {
-	struct mdnie_info *mdnie = container_of(h, struct mdnie_info, early_suspend);
+	if (!mdnie->fb_suspended)
+		return;
+
+	mdnie->fb_suspended = false;
 
 	dev_info(mdnie->dev, "+%s\n", __func__);
 
@@ -1016,7 +1025,6 @@ static void mdnie_late_resume(struct early_suspend *h)
 
 	mdnie->bd_enable = TRUE;
 #endif
-
 	mdnie_update(mdnie);
 
 	dev_info(mdnie->dev, "-%s\n", __func__);
@@ -1024,6 +1032,32 @@ static void mdnie_late_resume(struct early_suspend *h)
 	return;
 }
 #endif
+
+static int fb_notifier_callback(struct notifier_block *self,
+				unsigned long event, void *data)
+{
+	struct fb_event *evdata = data;
+	int *blank;
+	struct mdnie_info *mdnie = container_of(self, struct mdnie_info, fb_notif);
+	if (evdata && evdata->data && mdnie) {
+		if (event == FB_EVENT_BLANK) {
+			blank = evdata->data;
+			switch (*blank) {
+				case FB_BLANK_UNBLANK:
+				case FB_BLANK_NORMAL:
+				case FB_BLANK_VSYNC_SUSPEND:
+				case FB_BLANK_HSYNC_SUSPEND:
+					mdnie_fb_resume(mdnie);
+					break;
+				default:
+				case FB_BLANK_POWERDOWN:
+					mdnie_fb_suspend(mdnie);
+					break;
+			}
+		}
+	}
+	return 0;
+}
 #endif
 
 static int mdnie_probe(struct platform_device *pdev)
@@ -1101,11 +1135,10 @@ static int mdnie_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, mdnie);
 	dev_set_drvdata(mdnie->dev, mdnie);
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
-	mdnie->early_suspend.suspend = mdnie_early_suspend;
-	mdnie->early_suspend.resume = mdnie_late_resume;
-	mdnie->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB - 1;
-	register_early_suspend(&mdnie->early_suspend);
+#ifdef CONFIG_FB
+	mdnie->fb_suspended = false;
+	mdnie->fb_notif.notifier_call = fb_notifier_callback;
+	fb_register_client(&mdnie->fb_notif);
 #endif
 
 
@@ -1187,7 +1220,7 @@ static struct platform_driver mdnie_driver = {
 	},
 	.probe		= mdnie_probe,
 	.remove		= mdnie_remove,
-#ifndef CONFIG_HAS_EARLYSUSPEND
+#ifndef CONFIG_FB
 	.suspend	= mdnie_suspend,
 	.resume		= mdnie_resume,
 #endif
