@@ -8,7 +8,6 @@
  *
  */
 
-#include <linux/export.h>
 #include <linux/kobject.h>
 #include <linux/string.h>
 #include <linux/resume-trace.h>
@@ -27,6 +26,7 @@
 #define CONFIG_EXYNOS4_GPU_LOCK
 #endif
 
+#ifdef CONFIG_DVFS_LIMIT
 #include <linux/cpufreq.h>
 #include <mach/cpufreq.h>
 
@@ -428,8 +428,7 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 			wakelock_force_suspend();
 #endif
 #else
-		error = enter_state(state);
-		suspend_stats_update(error);
+		error = pm_suspend(state);
 #endif
 	}
 #endif
@@ -648,28 +647,28 @@ static ssize_t cpufreq_max_limit_store(struct kobject *kobj,
 	if (val == -1) { /* Unlock request */
 		if (cpufreq_max_limit_val != -1) {
 			exynos_cpufreq_upper_limit_free(DVFS_LOCK_ID_USER);
-			/* Yank555.lu - unlock now means set lock to scaling max to support powersave mode properly */
-			/* cpufreq_max_limit_val = -1; */
-			policy = cpufreq_cpu_get(0);
-			if (get_cpufreq_level(policy->max, &cpufreq_level) == VALID_LEVEL) {
-				lock_ret = exynos_cpufreq_upper_limit(DVFS_LOCK_ID_USER, cpufreq_level);
-				cpufreq_max_limit_val = policy->max;
-				cpufreq_max_limit_coupled = SCALING_MAX_COUPLED;
-			}
-		}
+			cpufreq_max_limit_val = -1;
+		} else /* Already unlocked */
+			printk(KERN_ERR "%s: Unlock request is ignored\n",
+				__func__);
 	} else { /* Lock request */
-		if (get_cpufreq_level((unsigned int)val, &cpufreq_level) == VALID_LEVEL) {
-			if (cpufreq_max_limit_val != -1) {
-				/* Unlock the previous lock */
-				exynos_cpufreq_upper_limit_free(DVFS_LOCK_ID_USER);
-				cpufreq_max_limit_coupled = SCALING_MAX_UNCOUPLED; /* if a limit existed, uncouple */
-			} else {
-				cpufreq_max_limit_coupled = SCALING_MAX_COUPLED; /* if no limit existed, we're booting, couple */
-			}
-			lock_ret = exynos_cpufreq_upper_limit(DVFS_LOCK_ID_USER, cpufreq_level);
-			/* ret of exynos_cpufreq_upper_limit is meaningless.
-			   0 is fail? success? */
-			cpufreq_max_limit_val = val;
+		if (val < 1200000) {
+			val = 1000000;
+
+			if (get_cpufreq_level((unsigned int)val, &cpufreq_level)
+			    == VALID_LEVEL) {
+				if (cpufreq_max_limit_val != -1)
+					/* Unlock the previous lock */
+					exynos_cpufreq_upper_limit_free(
+						DVFS_LOCK_ID_USER);
+				lock_ret = exynos_cpufreq_upper_limit(
+						DVFS_LOCK_ID_USER, cpufreq_level);
+				/* ret of exynos_cpufreq_upper_limit is meaningless.
+				   0 is fail? success? */
+				cpufreq_max_limit_val = val;
+			} else /* Invalid lock request --> No action */
+				printk(KERN_ERR "%s: Lock request is invalid\n",
+						__func__);
 		}
 	}
 
@@ -902,7 +901,31 @@ out:
 power_attr(mali_lock);
 #endif
 
-static struct attribute *g[] = {
+#ifdef CONFIG_FREEZER
+static ssize_t pm_freeze_timeout_show(struct kobject *kobj,
+				      struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", freeze_timeout_msecs);
+}
+
+static ssize_t pm_freeze_timeout_store(struct kobject *kobj,
+				       struct kobj_attribute *attr,
+				       const char *buf, size_t n)
+{
+	unsigned long val;
+
+	if (kstrtoul(buf, 10, &val))
+		return -EINVAL;
+
+	freeze_timeout_msecs = val;
+	return n;
+}
+
+power_attr(pm_freeze_timeout);
+
+#endif	/* CONFIG_FREEZER*/
+
+static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
 	&pm_trace_attr.attr,
@@ -911,21 +934,27 @@ static struct attribute *g[] = {
 #ifdef CONFIG_PM_SLEEP
 	&pm_async_attr.attr,
 	&wakeup_count_attr.attr,
-	&touch_event_attr.attr,
-	&touch_event_timer_attr.attr,
-#ifdef CONFIG_PM_DEBUG
-	&pm_test_attr.attr,
+#ifdef CONFIG_PM_AUTOSLEEP
+	&autosleep_attr.attr,
 #endif
 #ifdef CONFIG_USER_WAKELOCK
 	&wake_lock_attr.attr,
 	&wake_unlock_attr.attr,
 #endif
 #endif
+#ifdef CONFIG_PM_SLEEP_DEBUG
+	&pm_print_times_attr.attr,
+#endif
+#endif
+#ifdef CONFIG_DVFS_LIMIT
 	&cpufreq_table_attr.attr,
 	&cpufreq_max_limit_attr.attr,
 	&cpufreq_min_limit_attr.attr,
 #ifdef CONFIG_PEGASUS_GPU_LOCK
 	&mali_lock_attr.attr,
+#endif
+#ifdef CONFIG_EXYNOS4_GPU_LOCK
+	&gpu_lock_attr.attr,
 #endif
 #ifdef CONFIG_ROTATION_BOOSTER_SUPPORT
 	&rotation_booster_attr.attr,

@@ -49,6 +49,10 @@
 
 #define DRIVER_VERSION		"22-Aug-2005"
 
+#ifdef CONFIG_MDM_HSIC_PM		
+#include <linux/mdm_hsic_pm.h>		
+static const char rmnet_pm_dev[] = "mdm_hsic_pm0";		
+#endif		
 
 /*-------------------------------------------------------------------------*/
 
@@ -242,6 +246,13 @@ void usbnet_skb_return (struct usbnet *dev, struct sk_buff *skb)
 	if (status != NET_RX_SUCCESS)
 		netif_dbg(dev, rx_err, dev->net,
 			  "netif_rx status %d\n", status);
+#ifdef CONFIG_MDM_HSIC_PM		
+	if (dev->udev->descriptor.idProduct == 0x9048 ||		
+				dev->udev->descriptor.idProduct == 0x904C) {		
+		pr_debug("rx fast dormancy wakelock\n");		
+		fast_dormancy_wakelock(rmnet_pm_dev);		
+	}		
+#endif
 }
 EXPORT_SYMBOL_GPL(usbnet_skb_return);
 
@@ -998,9 +1009,19 @@ static void tx_complete (struct urb *urb)
 		if (!(dev->driver_info->flags & FLAG_MULTI_PACKET))
 			dev->net->stats.tx_packets++;
 		dev->net->stats.tx_bytes += entry->length;
+#ifdef CONFIG_MDM_HSIC_PM		
+		if (dev->udev->descriptor.idProduct == 0x9048 ||		
+				dev->udev->descriptor.idProduct == 0x904C) {		
+			pr_debug("set tx wakelock for fd\n");		
+			fast_dormancy_wakelock(rmnet_pm_dev);		
+		}		
+#endif
 	} else {
 		dev->net->stats.tx_errors++;
-
+		if (dev->udev->descriptor.idProduct == 0x9048 ||		
+				dev->udev->descriptor.idProduct == 0x904C)		
+			netdev_err(dev->net, "tx err %d, %d\n",		
+					urb->status, entry->urb->status);
 		switch (urb->status) {
 		case -EPIPE:
 			usbnet_defer_kevent (dev, EVENT_TX_HALT);

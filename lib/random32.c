@@ -142,8 +142,7 @@ void prandom_seed(u32 entropy)
 	 */
 	for_each_possible_cpu (i) {
 		struct rnd_state *state = &per_cpu(net_rand_state, i);
-		state->s1 = __seed(state->s1 ^ entropy, 2);
-		prandom_u32_state(state);
+		state->s1 = __seed(state->s1 ^ entropy, 1);
 	}
 }
 EXPORT_SYMBOL(prandom_seed);

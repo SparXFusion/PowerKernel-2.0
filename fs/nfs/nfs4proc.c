@@ -1703,38 +1703,33 @@ static int nfs4_open_expired(struct nfs4_state_owner *sp, struct nfs4_state *sta
 	return ret;
 }
 
-static void nfs_finish_clear_delegation_stateid(struct nfs4_state *state)
-{
-	nfs_remove_bad_delegation(state->inode);
-	write_seqlock(&state->seqlock);
-	nfs4_stateid_copy(&state->stateid, &state->open_stateid);
-	write_sequnlock(&state->seqlock);
-	clear_bit(NFS_DELEGATED_STATE, &state->flags);
-}
-
-static void nfs40_clear_delegation_stateid(struct nfs4_state *state)
-{
-	if (rcu_access_pointer(NFS_I(state->inode)->delegation) != NULL)
-		nfs_finish_clear_delegation_stateid(state);
-}
-
-static int nfs40_open_expired(struct nfs4_state_owner *sp, struct nfs4_state *state)
-{
-	/* NFSv4.0 doesn't allow for delegation recovery on open expire */
-	nfs40_clear_delegation_stateid(state);
-	return nfs4_open_expired(sp, state);
-}
-
 #if defined(CONFIG_NFS_V4_1)
-static int nfs41_open_expired(struct nfs4_state_owner *sp, struct nfs4_state *state)
+static int nfs41_check_expired_stateid(struct nfs4_state *state, nfs4_stateid *stateid, unsigned int flags)
 {
-	int status;
+	int status = NFS_OK;
 	struct nfs_server *server = NFS_SERVER(state->inode);
 
-	status = nfs41_test_stateid(server, state);
-	if (status == NFS_OK)
-		return 0;
-	nfs41_free_stateid(server, state);
+	if (state->flags & flags) {
+		status = nfs41_test_stateid(server, stateid);
+		if (status != NFS_OK) {
+			nfs41_free_stateid(server, stateid);
+			state->flags &= ~flags;
+		}
+	}
+	return status;
+}
+
+static int nfs41_open_expired(struct nfs4_state_owner *sp, struct nfs4_state *state)
+{
+	int deleg_status, open_status;
+	int deleg_flags = 1 << NFS_DELEGATED_STATE;
+	int open_flags = (1 << NFS_O_RDONLY_STATE) | (1 << NFS_O_WRONLY_STATE) | (1 << NFS_O_RDWR_STATE);
+
+	deleg_status = nfs41_check_expired_stateid(state, &state->stateid, deleg_flags);
+	open_status = nfs41_check_expired_stateid(state,  &state->open_stateid, open_flags);
+
+	if ((deleg_status == NFS_OK) && (open_status == NFS_OK))
+		return NFS_OK;
 	return nfs4_open_expired(sp, state);
 }
 #endif
