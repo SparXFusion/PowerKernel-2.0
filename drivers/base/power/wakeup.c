@@ -17,6 +17,8 @@
 
 #include "power.h"
 
+#define TIMEOUT		100
+
 /*
  * If set, the suspend/hibernate code will abort transitions to a sleep state
  * if wakeup events are registered during or immediately before the transition.
@@ -121,6 +123,15 @@ void wakeup_source_destroy(struct wakeup_source *ws)
 EXPORT_SYMBOL_GPL(wakeup_source_destroy);
 
 /**
+ * wakeup_source_destroy_cb
+ * defer processing until all rcu references have expired
+ */
+static void wakeup_source_destroy_cb(struct rcu_head *head)
+{
+	wakeup_source_destroy(container_of(head, struct wakeup_source, rcu));
+}
+
+/**
  * wakeup_source_add - Add given object to the list of wakeup sources.
  * @ws: Wakeup source object to add to the list.
  */
@@ -145,15 +156,16 @@ EXPORT_SYMBOL_GPL(wakeup_source_add);
  */
 void wakeup_source_remove(struct wakeup_source *ws)
 {
+	unsigned long flags;
+
 	if (WARN_ON(!ws))
 		return;
 
 	spin_lock_irq(&events_lock);
 	list_del_rcu(&ws->entry);
-	spin_unlock_irq(&events_lock);
+	spin_unlock_irqrestore(&events_lock, flags);
 	synchronize_rcu();
 }
-EXPORT_SYMBOL_GPL(wakeup_source_remove);
 
 /**
  * wakeup_source_register - Create wakeup source and add it to the list.
@@ -177,10 +189,8 @@ EXPORT_SYMBOL_GPL(wakeup_source_register);
  */
 void wakeup_source_unregister(struct wakeup_source *ws)
 {
-	if (ws) {
-		wakeup_source_remove(ws);
-		wakeup_source_destroy(ws);
-	}
+	wakeup_source_remove(ws);
+	wakeup_source_destroy(ws);
 }
 EXPORT_SYMBOL_GPL(wakeup_source_unregister);
 
@@ -590,6 +600,10 @@ void __pm_wakeup_event(struct wakeup_source *ws, unsigned int msec)
 	spin_lock_irqsave(&ws->lock, flags);
 
 	wakeup_source_report_event(ws);
+
+	// Regulate Wake Time
+	if (ktime_to_ms(ws->total_time) > 900000 || ws->active_count > 8)
+		msec = ((msec * 3) / 5);
 
 	if (!msec) {
 		wakeup_source_deactivate(ws);
