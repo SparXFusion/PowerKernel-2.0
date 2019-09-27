@@ -2261,16 +2261,6 @@ out:
 }
 EXPORT_SYMBOL_GPL(dm_get_md);
 
-struct mapped_device *dm_get_md(dev_t dev)
-{
-	struct mapped_device *md = dm_find_md(dev);
-
-	if (md)
-		dm_get(md);
-
-	return md;
-}
-
 void *dm_get_mdptr(struct mapped_device *md)
 {
 	return md->interface_ptr;
