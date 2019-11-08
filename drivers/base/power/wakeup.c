@@ -612,33 +612,32 @@ void __pm_wakeup_event(struct wakeup_source *ws, unsigned int msec)
 {
 	unsigned long flags;
 	unsigned long expires;
-
 	if (!ws)
 		return;
-
 	spin_lock_irqsave(&ws->lock, flags);
+	ws->event_count++;
+	if (!ws->active)
+		wakeup_source_activate(ws);
 
-	wakeup_source_report_event(ws);
+	// Regulate Wake Time
+	if (ktime_to_ms(ws->total_time) > 900000 || ws->active_count > 8)
+		msec = ((msec * 3) / 5);
 
 	if (!msec) {
 		wakeup_source_deactivate(ws);
 		goto unlock;
 	}
-
 	expires = jiffies + msecs_to_jiffies(msec);
 	if (!expires)
 		expires = 1;
-
-	if (!ws->timer_expires || time_after(expires, ws->timer_expires)) {
+	if (time_after(expires, ws->timer_expires)) {
 		mod_timer(&ws->timer, expires);
 		ws->timer_expires = expires;
 	}
-
  unlock:
 	spin_unlock_irqrestore(&ws->lock, flags);
 }
 EXPORT_SYMBOL_GPL(__pm_wakeup_event);
-
 
 /**
  * pm_wakeup_event - Notify the PM core of a wakeup event.
